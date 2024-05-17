@@ -75,7 +75,8 @@ cpu_flush_dcache(vaddr_t addr, vsize_t len)
 		__asm volatile("dc civac, %0" :: "r" (addr) : "memory");
 
 	/* Full system DSB */
-	__asm volatile("dsb sy" ::: "memory");
+	__asm volatile("dsb ish" ::: "memory");
+	__asm volatile("isb" ::: "memory");
 }
 
 void
@@ -120,6 +121,14 @@ run_loadfile(uint64_t *marks, int howto)
 	cpu_inval_icache();
 
 	cpu_flush_dcache((vaddr_t)fdt, fdt_get_size(fdt));
+
+#if 0
+	extern int sl_do_bounce;
+	if (sl_do_bounce) {
+		extern int slbounce(void);
+		slbounce();
+	}
+#endif
 
 	(*(startfuncp)(marks[MARK_ENTRY]))((void *)marks[MARK_END], 0, fdt);
 

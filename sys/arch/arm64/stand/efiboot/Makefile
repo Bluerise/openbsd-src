@@ -11,6 +11,7 @@ BINDIR=		/usr/mdec
 SRCS=		start.S self_reloc.c efiboot.c conf.c exec.c efiacpi.c
 SRCS+=		efidev.c efipxe.c efirng.c fdt.c smbios.c
 SRCS+=		softraid_arm64.c
+SRCS+=		slbounce.c sl.c trans.s
 
 S=		${.CURDIR}/../../../..
 EFIDIR=		${S}/stand/efi

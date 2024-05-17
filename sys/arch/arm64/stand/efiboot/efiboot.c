@@ -76,6 +76,7 @@ int efi_device_path_depth(EFI_DEVICE_PATH *dp, int);
 int efi_device_path_ncmp(EFI_DEVICE_PATH *, EFI_DEVICE_PATH *, int);
 static void efi_heap_init(void);
 static void efi_memprobe_internal(void);
+static void efi_memprobe_sync(void);
 static void efi_timer_init(void);
 static void efi_timer_cleanup(void);
 static EFI_STATUS efi_memprobe_find(UINTN, UINTN, EFI_MEMORY_TYPE,
@@ -759,6 +760,15 @@ efi_cleanup(void)
 		if (retry == 0)
 			panic("ExitBootServices failed (%d)", status);
 	}
+
+#if 1
+	extern int sl_do_bounce;
+	if (sl_do_bounce) {
+		extern int slbounce(void);
+		efi_memprobe_sync();
+		slbounce();
+	}
+#endif
 }
 
 void
@@ -1035,6 +1045,49 @@ efi_memprobe_internal(void)
 }
 
 /*
+ * Unfortunately switching to EL2 will corrupt the caches and
+ * the memory will be gone if it was not flushed to ram. Since
+ * the OS loaders generally assume EBS won't break caches, we
+ * have to flush and invalidate everything to make sure loader
+ * doesn't break.
+ *
+ * We can't possibly know which memory was touched by the loader
+ * so we just flush everything that was allocated here. This
+ * is suboptimal but would hopefully make sure we don't crash.
+ *
+ * Note that if we try to flush caches on hyp-owned memory, we
+ * will also crash. Thus we perform AUTH command after we flushed
+ * all the cache.
+ */
+static void
+efi_memprobe_sync(void)
+{
+	EFI_MEMORY_DESCRIPTOR *mm;
+	int i;
+
+	for (i = 0, mm = mmap; i < mmap_ndesc;
+	    i++, mm = NextMemoryDescriptor(mm, mmap_descsiz)) {
+		uint64_t start = mm->PhysicalStart;
+		uint64_t size  = mm->NumberOfPages * 4096;
+
+		switch (mm->Type) {
+		case EfiLoaderCode:
+		case EfiLoaderData:
+		case EfiBootServicesCode:
+		case EfiBootServicesData:
+		case EfiRuntimeServicesCode:
+		case EfiRuntimeServicesData:
+		case EfiACPIReclaimMemory:
+			{
+			extern void cpu_flush_dcache(vaddr_t, vsize_t);
+			cpu_flush_dcache(start, size);
+			break;
+			}
+		}
+	}
+}
+
+/*
  * 64-bit ARMs can have a much wider memory mapping, as in somewhere
  * after the 32-bit region.  To cope with our alignment requirement,
  * use the memory table to find a place where we can fit.
@@ -1214,12 +1267,14 @@ int Xacpi_efi(void);
 int Xdtb_efi(void);
 int Xexit_efi(void);
 int Xpoweroff_efi(void);
+int Xslbounce_efi(void);
 
 const struct cmd_table cmd_machine[] = {
 	{ "acpi",	CMDT_CMD, Xacpi_efi },
 	{ "dtb",	CMDT_CMD, Xdtb_efi },
 	{ "exit",	CMDT_CMD, Xexit_efi },
 	{ "poweroff",	CMDT_CMD, Xpoweroff_efi },
+	{ "slbounce",	CMDT_CMD, Xslbounce_efi },
 	{ NULL, 0 }
 };
 
@@ -1259,5 +1314,17 @@ int
 Xpoweroff_efi(void)
 {
 	RS->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+	return (0);
+}
+
+int sl_do_bounce = 0;
+
+int
+Xslbounce_efi(void)
+{
+	extern int sl_init(void);
+	if (!sl_init()) {
+		sl_do_bounce = 1;
+	}
 	return (0);
 }
