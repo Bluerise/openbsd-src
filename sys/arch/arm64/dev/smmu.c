@@ -113,6 +113,13 @@ int smmu_dmamap_load_raw(bus_dma_tag_t , bus_dmamap_t,
      bus_dma_segment_t *, int, bus_size_t, int);
 void smmu_dmamap_unload(bus_dma_tag_t , bus_dmamap_t);
 
+uint32_t smmu_v3_read_4(struct smmu_softc *, bus_size_t);
+void smmu_v3_write_4(struct smmu_softc *, bus_size_t, uint32_t);
+uint64_t smmu_v3_read_8(struct smmu_softc *, bus_size_t);
+void smmu_v3_write_8(struct smmu_softc *, bus_size_t, uint64_t);
+int smmu_v3_write_ack(struct smmu_softc *, bus_size_t, bus_size_t,
+     uint32_t);
+
 struct cfdriver smmu_cd = {
 	NULL, "smmu", DV_DULL
 };
@@ -120,9 +127,6 @@ struct cfdriver smmu_cd = {
 int
 smmu_attach(struct smmu_softc *sc)
 {
-	uint32_t reg;
-	int i;
-
 	SIMPLEQ_INIT(&sc->sc_domains);
 
 	pool_init(&sc->sc_vp_pool, sizeof(struct smmuvp0), PAGE_SIZE, IPL_VM, 0,
@@ -131,6 +135,18 @@ smmu_attach(struct smmu_softc *sc)
 	pool_init(&sc->sc_vp3_pool, sizeof(struct smmuvp3), PAGE_SIZE, IPL_VM, 0,
 	    "smmu_vp3", NULL);
 	pool_setlowat(&sc->sc_vp3_pool, 20);
+
+	return 0;
+}
+
+int
+smmu_v2_attach(struct smmu_softc *sc)
+{
+	uint32_t reg;
+	int i;
+
+	if (smmu_attach(sc) != 0)
+		return ENXIO;
 
 	reg = smmu_gr0_read_4(sc, SMMU_IDR0);
 	if (reg & SMMU_IDR0_S1TS)
@@ -355,7 +371,7 @@ smmu_attach(struct smmu_softc *sc)
 }
 
 int
-smmu_global_irq(void *cookie)
+smmu_v2_global_irq(void *cookie)
 {
 	struct smmu_softc *sc = cookie;
 	uint32_t reg;
@@ -376,7 +392,7 @@ smmu_global_irq(void *cookie)
 }
 
 int
-smmu_context_irq(void *cookie)
+smmu_v2_context_irq(void *cookie)
 {
 	struct smmu_cb_irq *cbi = cookie;
 	struct smmu_softc *sc = cbi->cbi_sc;
@@ -1460,4 +1476,344 @@ smmu_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 
 	smmu_unload_map(dom, map);
 	sc->sc_dmat->_dmamap_unload(sc->sc_dmat, map);
+}
+
+#define SMMU_DMA_MAP(_sdm)	((_sdm)->sdm_map)
+#define SMMU_DMA_LEN(_sdm)	((_sdm)->sdm_size)
+#define SMMU_DMA_DVA(_sdm)	((_sdm)->sdm_map->dm_segs[0].ds_addr)
+#define SMMU_DMA_KVA(_sdm)	((void *)(_sdm)->sdm_kva)
+
+struct smmu_dmamem *
+smmu_dmamem_alloc(bus_dma_tag_t dmat, bus_size_t size, bus_size_t align)
+{
+	struct smmu_dmamem *sdm;
+	int nsegs;
+
+	sdm = malloc(sizeof(*sdm), M_DEVBUF, M_WAITOK | M_ZERO);
+	sdm->sdm_size = size;
+
+	if (bus_dmamap_create(dmat, size, 1, size, 0,
+	    BUS_DMA_WAITOK | BUS_DMA_ALLOCNOW, &sdm->sdm_map) != 0)
+		goto sdmfree;
+
+	if (bus_dmamem_alloc(dmat, size, align, 0, &sdm->sdm_seg, 1,
+	    &nsegs, BUS_DMA_WAITOK | BUS_DMA_ZERO) != 0)
+		goto destroy;
+
+	if (bus_dmamem_map(dmat, &sdm->sdm_seg, nsegs, size,
+	    &sdm->sdm_kva, BUS_DMA_WAITOK/* | BUS_DMA_NOCACHE*/) != 0)
+		goto free;
+
+	if (bus_dmamap_load_raw(dmat, sdm->sdm_map, &sdm->sdm_seg,
+	    nsegs, size, BUS_DMA_WAITOK) != 0)
+		goto unmap;
+
+	return sdm;
+
+unmap:
+	bus_dmamem_unmap(dmat, sdm->sdm_kva, size);
+free:
+	bus_dmamem_free(dmat, &sdm->sdm_seg, 1);
+destroy:
+	bus_dmamap_destroy(dmat, sdm->sdm_map);
+sdmfree:
+	free(sdm, M_DEVBUF, sizeof(*sdm));
+
+	return NULL;
+}
+
+void
+smmu_dmamem_free(bus_dma_tag_t dmat, struct smmu_dmamem *sdm)
+{
+	bus_dmamem_unmap(dmat, sdm->sdm_kva, sdm->sdm_size);
+	bus_dmamem_free(dmat, &sdm->sdm_seg, 1);
+	bus_dmamap_destroy(dmat, sdm->sdm_map);
+	free(sdm, M_DEVBUF, sizeof(*sdm));
+}
+
+/* SMMU v3 */
+int
+smmu_v3_attach(struct smmu_softc *sc)
+{
+	uint32_t reg;
+	int has_pri = 0, i;
+
+	if (smmu_attach(sc) != 0)
+		return ENXIO;
+
+	reg = smmu_v3_read_4(sc, SMMU_V3_IDR0);
+	printf("%s: 0x%08x\n", __func__, reg);
+	if (!(reg & SMMU_V3_TTF_AA64)) {
+		printf(": no support for AA64\n");
+		return ENXIO;
+	}
+	if (reg & SMMU_V3_IDR0_S1P)
+		sc->sc_has_s1 = 1;
+	if (reg & SMMU_V3_IDR0_S2P)
+		sc->sc_has_s2 = 1;
+	if (reg & SMMU_V3_IDR0_COHACC)
+		sc->sc_coherent = 1;
+	if (reg & SMMU_V3_IDR0_ASID16)
+		sc->v3.sc_has_asid16s = 1;
+	if (reg & SMMU_V3_IDR0_PRI)
+		has_pri = 1;
+	if (reg & SMMU_V3_IDR0_VMID16)
+		sc->sc_has_vmid16s = 1;
+	if (SMMU_V3_IDR0_ST_LEVEL(reg) == SMMU_V3_IDR0_ST_LEVEL_2)
+		sc->v3.sc_2lvl_strtab = 1;
+
+	reg = smmu_v3_read_4(sc, SMMU_V3_IDR1);
+	printf("%s: 0x%08x\n", __func__, reg);
+	sc->v3.sc_cmdq.sq_size_log2 = SMMU_V3_IDR1_CMDQS(reg);
+	sc->v3.sc_eventq.sq_size_log2 = SMMU_V3_IDR1_EVENTQS(reg);
+	sc->v3.sc_priq.sq_size_log2 = SMMU_V3_IDR1_PRIQS(reg);
+	sc->v3.sc_sidsize = SMMU_V3_IDR1_SIDSIZE(reg);
+	if (sc->v3.sc_sidsize <= 8)
+		sc->v3.sc_2lvl_strtab = 0;
+	else if (sc->v3.sc_sidsize > 17)
+		sc->v3.sc_sidsize = 17;
+
+	reg = smmu_v3_read_4(sc, SMMU_V3_IDR3);
+	printf("%s: 0x%08x\n", __func__, reg);
+
+	reg = smmu_v3_read_4(sc, SMMU_V3_IDR5);
+	printf("%s: 0x%08x\n", __func__, reg);
+	switch (SMMU_V3_IDR5_OAS(reg)) {
+	case SMMU_V3_IDR5_OAS_32BIT:
+		sc->sc_pa_bits = 32;
+		break;
+	case SMMU_V3_IDR5_OAS_36BIT:
+		sc->sc_pa_bits = 36;
+		break;
+	case SMMU_V3_IDR5_OAS_40BIT:
+		sc->sc_pa_bits = 40;
+		break;
+	case SMMU_V3_IDR5_OAS_42BIT:
+		sc->sc_pa_bits = 42;
+		break;
+	case SMMU_V3_IDR5_OAS_44BIT:
+		sc->sc_pa_bits = 44;
+		break;
+	case SMMU_V3_IDR5_OAS_48BIT:
+		sc->sc_pa_bits = 48;
+		break;
+	case SMMU_V3_IDR5_OAS_52BIT:
+	default:
+		sc->sc_pa_bits = 52;
+		break;
+	}
+	sc->sc_va_bits = 48;
+	if (reg & SMMU_V3_IDR5_VAX)
+		sc->sc_va_bits = 52;
+	/* Unless there's no AA64, then it's 40. */
+	sc->sc_ipa_bits = sc->sc_pa_bits;
+
+	sc->v3.sc_cmdq.sq_sdm = smmu_dmamem_alloc(sc->sc_dmat,
+	     (1ULL << sc->v3.sc_cmdq.sq_size_log2) * 2 * sizeof(uint64_t),
+	     64 * 1024);
+	if (sc->v3.sc_cmdq.sq_sdm == NULL) {
+		printf(": can't allocate command queue\n");
+		goto out;
+	}
+	sc->v3.sc_eventq.sq_sdm = smmu_dmamem_alloc(sc->sc_dmat,
+	     (1ULL << sc->v3.sc_eventq.sq_size_log2) * 4 * sizeof(uint64_t),
+	     64 * 1024);
+	if (sc->v3.sc_eventq.sq_sdm == NULL) {
+		printf(": can't allocate event queue\n");
+		goto free_cmdq;
+	}
+	if (has_pri) {
+		sc->v3.sc_priq.sq_sdm = smmu_dmamem_alloc(sc->sc_dmat,
+		     (1ULL << sc->v3.sc_priq.sq_size_log2) * 2 * sizeof(uint64_t),
+		     64 * 1024);
+		if (sc->v3.sc_priq.sq_sdm == NULL) {
+			printf(": can't allocate pri queue\n");
+			goto free_evtq;
+		}
+	}
+
+	/* Abort transaction if already enabled. */
+	if (smmu_v3_read_4(sc, SMMU_V3_CR0) & SMMU_V3_CR0_SMMUEN) {
+		reg = smmu_v3_read_4(sc, SMMU_V3_GBPA);
+		reg |= SMMU_V3_GBPA_ABORT;
+		smmu_v3_write_4(sc, SMMU_V3_GBPA, reg | SMMU_V3_GBPA_UPDATE);
+		for (i = 100000; i > 0; i--) {
+			if (!(smmu_v3_read_4(sc, SMMU_V3_GBPA) & SMMU_V3_GBPA_UPDATE))
+				break;
+		}
+		if (i == 0) {
+			printf("%s: failed waiting for update\n", sc->sc_dev.dv_xname);
+			goto free_priq;
+		}
+	}
+
+	/* Disable SMMU */
+	smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK,
+	    smmu_v3_read_4(sc, SMMU_V3_CR0) & ~SMMU_V3_CR0_SMMUEN);
+
+	smmu_v3_write_4(sc, SMMU_V3_CR1,
+	    SMMU_V3_CR1_TABLE_SH(SMMU_V3_CR1_SHARE_ISH) |
+	    SMMU_V3_CR1_TABLE_OC(SMMU_V3_CR1_CACHE_WB) |
+	    SMMU_V3_CR1_TABLE_IC(SMMU_V3_CR1_CACHE_WB) |
+	    SMMU_V3_CR1_QUEUE_SH(SMMU_V3_CR1_SHARE_ISH) |
+	    SMMU_V3_CR1_QUEUE_OC(SMMU_V3_CR1_CACHE_WB) |
+	    SMMU_V3_CR1_QUEUE_IC(SMMU_V3_CR1_CACHE_WB));
+	smmu_v3_write_4(sc, SMMU_V3_CR2, SMMU_V3_CR2_PTM |
+	    SMMU_V3_CR2_RECINVSID);
+
+	if (sc->v3.sc_2lvl_strtab) {
+		/* Need enough pointers to cover all possible L1 */
+		sc->v3.sc_strtab_l1 = smmu_dmamem_alloc(sc->sc_dmat,
+		    ((1ULL << sc->v3.sc_sidsize) / 256) * sizeof(uint64_t),
+		    64 * 1024);
+		if (sc->v3.sc_strtab_l1 == NULL) {
+			printf(": can't allocate strtab\n");
+			goto free_priq;
+		}
+		smmu_v3_write_8(sc, SMMU_V3_STRTAB_BASE,
+		    SMMU_V3_STRTAB_BASE_RA |
+		    SMMU_DMA_DVA(sc->v3.sc_strtab_l1));
+		smmu_v3_write_4(sc, SMMU_V3_STRTAB_BASE_CFG,
+		    SMMU_V3_STRTAB_BASE_CFG_FMT_L2 |
+		    SMMU_V3_STRTAB_BASE_CFG_SPLIT(8) |
+		    SMMU_V3_STRTAB_BASE_CFG_LOG2SIZE(sc->v3.sc_sidsize));
+	} else {
+		/* Only need up to SIDSIZE, but let's for 256 entries */
+		sc->v3.sc_strtab_l1 = smmu_dmamem_alloc(sc->sc_dmat,
+		    (1ULL << sc->v3.sc_sidsize) * sizeof(struct smmu_v3_ste),
+		    64 * 1024);
+		if (sc->v3.sc_strtab_l1 == NULL) {
+			printf(": can't allocate strtab\n");
+			goto free_priq;
+		}
+		smmu_v3_write_8(sc, SMMU_V3_STRTAB_BASE,
+		    SMMU_V3_STRTAB_BASE_RA |
+		    SMMU_DMA_DVA(sc->v3.sc_strtab_l1));
+		smmu_v3_write_4(sc, SMMU_V3_STRTAB_BASE_CFG,
+		    SMMU_V3_STRTAB_BASE_CFG_FMT_L1 |
+		    SMMU_V3_STRTAB_BASE_CFG_LOG2SIZE(sc->v3.sc_sidsize));
+	}
+
+	smmu_v3_write_8(sc, SMMU_V3_CMDQ_BASE,
+	    SMMU_V3_CMDQ_BASE_RA |
+	    SMMU_DMA_DVA(sc->v3.sc_cmdq.sq_sdm) |
+	    SMMU_V3_CMDQ_BASE_LOG2SIZE(sc->v3.sc_cmdq.sq_size_log2));
+	smmu_v3_write_4(sc, SMMU_V3_CMDQ_PROD, 0);
+	smmu_v3_write_4(sc, SMMU_V3_CMDQ_CONS, 0);
+	smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK,
+	    smmu_v3_read_4(sc, SMMU_V3_CR0) | SMMU_V3_CR0_CMDQEN);
+
+	smmu_v3_write_8(sc, SMMU_V3_EVENTQ_BASE,
+	    SMMU_V3_EVENTQ_BASE_WA |
+	    SMMU_DMA_DVA(sc->v3.sc_eventq.sq_sdm) |
+	    SMMU_V3_EVENTQ_BASE_LOG2SIZE(sc->v3.sc_eventq.sq_size_log2));
+	smmu_v3_write_4(sc, SMMU_V3_EVENTQ_PROD, 0);
+	smmu_v3_write_4(sc, SMMU_V3_EVENTQ_CONS, 0);
+	smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK,
+	    smmu_v3_read_4(sc, SMMU_V3_CR0) | SMMU_V3_CR0_EVENTQEN);
+
+	if (has_pri) {
+		smmu_v3_write_8(sc, SMMU_V3_PRIQ_BASE,
+		    SMMU_V3_PRIQ_BASE_WA |
+		    SMMU_DMA_DVA(sc->v3.sc_priq.sq_sdm) |
+		    SMMU_V3_PRIQ_BASE_LOG2SIZE(sc->v3.sc_priq.sq_size_log2));
+		smmu_v3_write_4(sc, SMMU_V3_PRIQ_PROD, 0);
+		smmu_v3_write_4(sc, SMMU_V3_PRIQ_CONS, 0);
+		smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK,
+		    smmu_v3_read_4(sc, SMMU_V3_CR0) | SMMU_V3_CR0_PRIQEN);
+	}
+
+	/* Disable MSIs, use wired IRQs, re-enable IRQs. */
+	smmu_v3_write_ack(sc, SMMU_V3_IRQ_CTRL, SMMU_V3_IRQ_CTRLACK, 0);
+	smmu_v3_write_8(sc, SMMU_V3_GERROR_IRQ_CFG0, 0);
+	smmu_v3_write_8(sc, SMMU_V3_EVENTQ_IRQ_CFG0, 0);
+	if (has_pri)
+		smmu_v3_write_8(sc, SMMU_V3_PRIQ_IRQ_CFG0, 0);
+	smmu_v3_write_ack(sc, SMMU_V3_IRQ_CTRL, SMMU_V3_IRQ_CTRLACK,
+	    SMMU_V3_IRQ_CTRL_GERROR | SMMU_V3_IRQ_CTRL_EVENTQ |
+	    (has_pri ? SMMU_V3_IRQ_CTRL_PRIQ : 0));
+
+	smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK,
+	    smmu_v3_read_4(sc, SMMU_V3_CR0) | SMMU_V3_CR0_SMMUEN);
+
+	return 0;
+
+//free_strtab:
+//	smmu_dmamem_free(sc->sc_dmat, sc->v3.sc_strtab_l1);
+free_priq:
+	smmu_dmamem_free(sc->sc_dmat, sc->v3.sc_priq.sq_sdm);
+free_evtq:
+	smmu_dmamem_free(sc->sc_dmat, sc->v3.sc_eventq.sq_sdm);
+free_cmdq:
+	smmu_dmamem_free(sc->sc_dmat, sc->v3.sc_cmdq.sq_sdm);
+out:
+	return ENXIO;
+}
+
+int
+smmu_v3_event_irq(void *cookie)
+{
+	struct smmu_softc *sc = cookie;
+	printf("%s: %s\n", sc->sc_dev.dv_xname, __func__);
+	return 0;
+}
+
+int
+smmu_v3_gerr_irq(void *cookie)
+{
+	struct smmu_softc *sc = cookie;
+	printf("%s: %s\n", sc->sc_dev.dv_xname, __func__);
+	return 0;
+}
+
+int
+smmu_v3_sync_irq(void *cookie)
+{
+	struct smmu_softc *sc = cookie;
+	printf("%s: %s\n", sc->sc_dev.dv_xname, __func__);
+	return 0;
+}
+
+uint32_t
+smmu_v3_read_4(struct smmu_softc *sc, bus_size_t off)
+{
+	return bus_space_read_4(sc->sc_iot, sc->sc_ioh, off);
+}
+
+void
+smmu_v3_write_4(struct smmu_softc *sc, bus_size_t off, uint32_t val)
+{
+	bus_space_write_4(sc->sc_iot, sc->sc_ioh, off, val);
+}
+
+uint64_t
+smmu_v3_read_8(struct smmu_softc *sc, bus_size_t off)
+{
+	return bus_space_read_8(sc->sc_iot, sc->sc_ioh, off);
+}
+
+void
+smmu_v3_write_8(struct smmu_softc *sc, bus_size_t off, uint64_t val)
+{
+	bus_space_write_8(sc->sc_iot, sc->sc_ioh, off, val);
+}
+
+int
+smmu_v3_write_ack(struct smmu_softc *sc, bus_size_t off, bus_size_t ack_off,
+    uint32_t val)
+{
+	int i;
+
+	smmu_v3_write_4(sc, off, val);
+
+	for (i = 100000; i > 0; i--) {
+		if (smmu_v3_read_4(sc, ack_off) == val)
+			break;
+	}
+	if (i == 0) {
+		printf("%s: failed waiting for ack\n", sc->sc_dev.dv_xname);
+		return ETIMEDOUT;
+	}
+
+	return 0;
 }

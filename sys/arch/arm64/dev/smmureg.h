@@ -15,6 +15,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/* SMMU v2 */
+
 /* Global Register Space 0 */
 #define SMMU_SCR0			0x000
 #define  SMMU_SCR0_CLIENTPD			(1 << 0)
@@ -272,3 +274,95 @@
 #define SMMU_CB_TLBSYNC			0x7f0
 #define SMMU_CB_TLBSTATUS		0x7f4
 #define  SMMU_CB_TLBSTATUS_SACTIVE		(1 << 0)
+
+/* SMMU v3 */
+
+#define SMMU_V3_IDR0			0x000
+#define  SMMU_V3_IDR0_S2P			(1 << 0)
+#define  SMMU_V3_IDR0_S1P			(1 << 1)
+#define  SMMU_V3_TTF_AA32			(1 << 2)
+#define  SMMU_V3_TTF_AA64			(1 << 3)
+#define  SMMU_V3_IDR0_COHACC			(1 << 4)
+#define  SMMU_V3_IDR0_ASID16			(1 << 12)
+#define  SMMU_V3_IDR0_PRI			(1 << 16)
+#define  SMMU_V3_IDR0_VMID16			(1 << 18)
+#define  SMMU_V3_IDR0_ST_LEVEL(x)		(((x) >> 27) & 0x3)
+#define  SMMU_V3_IDR0_ST_LEVEL_1		0x0
+#define  SMMU_V3_IDR0_ST_LEVEL_2		0x1
+#define SMMU_V3_IDR1			0x004
+#define  SMMU_V3_IDR1_SIDSIZE(x)		(((x) >> 0) & 0x3f)
+#define  SMMU_V3_IDR1_SSIDSIZE(x)		(((x) >> 6) & 0x1f)
+#define  SMMU_V3_IDR1_EVENTQS(x)		(((x) >> 11) & 0x1f)
+#define  SMMU_V3_IDR1_PRIQS(x)			(((x) >> 16) & 0x1f)
+#define  SMMU_V3_IDR1_CMDQS(x)			(((x) >> 21) & 0x1f)
+#define SMMU_V3_IDR2			0x008
+#define SMMU_V3_IDR3			0x00c
+#define SMMU_V3_IDR4			0x010
+#define SMMU_V3_IDR5			0x014
+#define  SMMU_V3_IDR5_OAS(x)			(((x) >> 0) & 0x7)
+#define  SMMU_V3_IDR5_OAS_32BIT			0x0
+#define  SMMU_V3_IDR5_OAS_36BIT			0x1
+#define  SMMU_V3_IDR5_OAS_40BIT			0x2
+#define  SMMU_V3_IDR5_OAS_42BIT			0x3
+#define  SMMU_V3_IDR5_OAS_44BIT			0x4
+#define  SMMU_V3_IDR5_OAS_48BIT			0x5
+#define  SMMU_V3_IDR5_OAS_52BIT			0x6
+#define  SMMU_V3_IDR5_VAX			(1 << 10)
+#define SMMU_V3_IIDR			0x018
+#define SMMU_V3_AIDR			0x01c
+#define SMMU_V3_CR0			0x020
+#define  SMMU_V3_CR0_SMMUEN			(1 << 0)
+#define  SMMU_V3_CR0_PRIQEN			(1 << 1)
+#define  SMMU_V3_CR0_EVENTQEN			(1 << 2)
+#define  SMMU_V3_CR0_CMDQEN			(1 << 3)
+#define SMMU_V3_CR0ACK			0x024
+#define SMMU_V3_CR1			0x028
+#define  SMMU_V3_CR1_QUEUE_IC(x)		((x) << 0)
+#define  SMMU_V3_CR1_QUEUE_OC(x)		((x) << 2)
+#define  SMMU_V3_CR1_QUEUE_SH(x)		((x) << 4)
+#define  SMMU_V3_CR1_TABLE_IC(x)		((x) << 6)
+#define  SMMU_V3_CR1_TABLE_OC(x)		((x) << 8)
+#define  SMMU_V3_CR1_TABLE_SH(x)		((x) << 10)
+#define  SMMU_V3_CR1_CACHE_NC			0x0
+#define  SMMU_V3_CR1_CACHE_WB			0x1
+#define  SMMU_V3_CR1_CACHE_WT			0x2
+#define  SMMU_V3_CR1_SHARE_NSH			0x0
+#define  SMMU_V3_CR1_SHARE_OSH			0x2
+#define  SMMU_V3_CR1_SHARE_ISH			0x3
+#define SMMU_V3_CR2			0x02c
+#define  SMMU_V3_CR2_E2H			(1 << 0)
+#define  SMMU_V3_CR2_RECINVSID			(1 << 1)
+#define  SMMU_V3_CR2_PTM			(1 << 2)
+#define SMMU_V3_GBPA			0x044
+#define  SMMU_V3_GBPA_ABORT			(1 << 20)
+#define  SMMU_V3_GBPA_UPDATE			(1U << 31)
+#define SMMU_V3_IRQ_CTRL		0x050
+#define  SMMU_V3_IRQ_CTRL_GERROR		(1 << 0)
+#define  SMMU_V3_IRQ_CTRL_PRIQ			(1 << 1)
+#define  SMMU_V3_IRQ_CTRL_EVENTQ		(1 << 2)
+#define SMMU_V3_IRQ_CTRLACK		0x054
+#define SMMU_V3_GERROR_IRQ_CFG0		0x068
+#define SMMU_V3_STRTAB_BASE		0x80
+#define  SMMU_V3_STRTAB_BASE_RA			(1ULL << 62)
+#define SMMU_V3_STRTAB_BASE_CFG		0x88
+#define  SMMU_V3_STRTAB_BASE_CFG_LOG2SIZE(x)	((x) << 0)
+#define  SMMU_V3_STRTAB_BASE_CFG_SPLIT(x)	((x) << 6)
+#define  SMMU_V3_STRTAB_BASE_CFG_FMT_L1		(0 << 16)
+#define  SMMU_V3_STRTAB_BASE_CFG_FMT_L2		(1 << 16)
+#define SMMU_V3_CMDQ_BASE		0x090
+#define  SMMU_V3_CMDQ_BASE_RA			(1ULL << 62)
+#define  SMMU_V3_CMDQ_BASE_LOG2SIZE(x)		((x) << 0)
+#define SMMU_V3_CMDQ_PROD		0x098
+#define SMMU_V3_CMDQ_CONS		0x09c
+#define SMMU_V3_EVENTQ_BASE		0x090
+#define  SMMU_V3_EVENTQ_BASE_WA			(1ULL << 62)
+#define  SMMU_V3_EVENTQ_BASE_LOG2SIZE(x)	((x) << 0)
+#define SMMU_V3_EVENTQ_PROD		(0x098 + 0x10000)
+#define SMMU_V3_EVENTQ_CONS		(0x09c + 0x10000)
+#define SMMU_V3_EVENTQ_IRQ_CFG0		0x0b0
+#define SMMU_V3_PRIQ_BASE		0x0c0
+#define  SMMU_V3_PRIQ_BASE_WA			(1ULL << 62)
+#define  SMMU_V3_PRIQ_BASE_LOG2SIZE(x)		((x) << 0)
+#define SMMU_V3_PRIQ_PROD		(0x0c8 + 0x10000)
+#define SMMU_V3_PRIQ_CONS		(0x0cc + 0x10000)
+#define SMMU_V3_PRIQ_IRQ_CFG0		0x0d0
