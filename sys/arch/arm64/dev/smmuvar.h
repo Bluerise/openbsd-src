@@ -49,38 +49,81 @@ struct smmu_smr {
 	uint16_t			 ss_mask;
 };
 
+struct smmu_dmamem {
+	bus_dmamap_t		sdm_map;
+	bus_dma_segment_t	sdm_seg;
+	size_t			sdm_size;
+	caddr_t			sdm_kva;
+};
+
+struct smmu_v3_queue_local_copy {
+	union {
+		uint64_t val;
+		struct {
+			uint32_t prod;
+			uint32_t cons;
+		};
+	};
+};
+
+struct smmu_v3_queue {
+	struct smmu_dmamem		*sq_sdm;
+	off_t				 sq_prod_off;
+	off_t				 sq_cons_off;
+	int				 sq_size_log2;
+	struct smmu_v3_queue_local_copy	 sq_lc;
+};
+
 struct smmu_softc {
 	struct device		  sc_dev;
 	bus_space_tag_t		  sc_iot;
 	bus_space_handle_t	  sc_ioh;
 	bus_dma_tag_t		  sc_dmat;
-	int			  sc_is_mmu500;
-	int			  sc_is_ap806;
-	int			  sc_is_qcom;
-	int			  sc_bypass_quirk;
-	size_t			  sc_pagesize;
-	int			  sc_numpage;
-	int			  sc_num_context_banks;
-	int			  sc_num_s2_context_banks;
+
+	union {
+		struct {
+			int			  sc_is_mmu500;
+			int			  sc_is_ap806;
+			int			  sc_is_qcom;
+			int			  sc_bypass_quirk;
+			size_t			  sc_pagesize;
+			int			  sc_numpage;
+			int			  sc_num_context_banks;
+			int			  sc_num_s2_context_banks;
+			int			  sc_has_exids;
+			int			  sc_num_streams;
+			uint16_t		  sc_stream_mask;
+			struct smmu_smr		**sc_smr;
+			struct smmu_cb		**sc_cb;
+		};
+		struct {
+			int			  sc_has_asid16s;
+			struct smmu_v3_queue	  sc_cmdq;
+			struct smmu_v3_queue	  sc_eventq;
+			struct smmu_v3_queue	  sc_priq;
+		} v3;
+	};
+
 	int			  sc_has_s1;
 	int			  sc_has_s2;
-	int			  sc_has_exids;
 	int			  sc_has_vmid16s;
-	int			  sc_num_streams;
-	uint16_t		  sc_stream_mask;
 	int			  sc_ipa_bits;
 	int			  sc_pa_bits;
 	int			  sc_va_bits;
-	struct smmu_smr		**sc_smr;
-	struct smmu_cb		**sc_cb;
 	int			  sc_coherent;
 	struct pool		  sc_vp_pool;
 	struct pool		  sc_vp3_pool;
 	SIMPLEQ_HEAD(, smmu_domain) sc_domains;
 };
 
-int smmu_attach(struct smmu_softc *);
-int smmu_global_irq(void *);
-int smmu_context_irq(void *);
+int smmu_v2_attach(struct smmu_softc *);
+int smmu_v2_global_irq(void *);
+int smmu_v2_context_irq(void *);
+
+int smmu_v3_attach(struct smmu_softc *);
+int smmu_v3_event_irq(void *);
+int smmu_v3_gerr_irq(void *);
+int smmu_v3_sync_irq(void *);
+
 bus_dma_tag_t smmu_device_map(void *, uint32_t, bus_dma_tag_t);
 void smmu_reserve_region(void *, uint32_t, bus_addr_t, bus_size_t);

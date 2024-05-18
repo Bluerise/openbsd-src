@@ -15,6 +15,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/* SMMU v2 */
+
 /* Global Register Space 0 */
 #define SMMU_SCR0			0x000
 #define  SMMU_SCR0_CLIENTPD			(1 << 0)
@@ -272,3 +274,45 @@
 #define SMMU_CB_TLBSYNC			0x7f0
 #define SMMU_CB_TLBSTATUS		0x7f4
 #define  SMMU_CB_TLBSTATUS_SACTIVE		(1 << 0)
+
+/* SMMU v3 */
+
+#define SMMU_V3_IDR0			0x000
+#define  SMMU_V3_IDR0_S2P			(1 << 0)
+#define  SMMU_V3_IDR0_S1P			(1 << 1)
+#define  SMMU_V3_TTF_AA32			(1 << 2)
+#define  SMMU_V3_TTF_AA64			(1 << 3)
+#define  SMMU_V3_IDR0_COHACC			(1 << 4)
+#define  SMMU_V3_IDR0_ASID16			(1 << 12)
+#define  SMMU_V3_IDR0_PRI			(1 << 16)
+#define  SMMU_V3_IDR0_VMID16			(1 << 18)
+#define SMMU_V3_IDR1			0x004
+#define  SMMU_V3_IDR1_SIDSIZE(x)		(((x) >> 0) & 0x3f)
+#define  SMMU_V3_IDR1_SSIDSIZE(x)		(((x) >> 6) & 0x1f)
+#define  SMMU_V3_IDR1_EVENTQS(x)		(((x) >> 11) & 0x1f)
+#define  SMMU_V3_IDR1_PRIQS(x)			(((x) >> 16) & 0x1f)
+#define  SMMU_V3_IDR1_CMDQS(x)			(((x) >> 21) & 0x1f)
+#define SMMU_V3_IDR2			0x008
+#define SMMU_V3_IDR3			0x00c
+#define SMMU_V3_IDR4			0x010
+#define SMMU_V3_IDR5			0x014
+#define  SMMU_V3_IDR5_OAS(x)			(((x) >> 0) & 0x7)
+#define  SMMU_V3_IDR5_OAS_32BIT			0x0
+#define  SMMU_V3_IDR5_OAS_36BIT			0x1
+#define  SMMU_V3_IDR5_OAS_40BIT			0x2
+#define  SMMU_V3_IDR5_OAS_42BIT			0x3
+#define  SMMU_V3_IDR5_OAS_44BIT			0x4
+#define  SMMU_V3_IDR5_OAS_48BIT			0x5
+#define  SMMU_V3_IDR5_OAS_52BIT			0x6
+#define  SMMU_V3_IDR5_VAX			(1 << 10)
+#define SMMU_V3_IIDR			0x018
+#define SMMU_V3_AIDR			0x01c
+#define SMMU_V3_CR0			0x020
+#define  SMMU_V3_CR0_SMMUEN			(1 << 0)
+#define  SMMU_V3_CR0_PRIQEN			(1 << 1)
+#define  SMMU_V3_CR0_EVENTQEN			(1 << 2)
+#define  SMMU_V3_CR0_CMDQEN			(1 << 3)
+#define SMMU_V3_CR0ACK			0x024
+#define SMMU_V3_GBPA			0x044
+#define  SMMU_V3_GBPA_ABORT			(1 << 20)
+#define  SMMU_V3_GBPA_UPDATE			(1U << 31)
