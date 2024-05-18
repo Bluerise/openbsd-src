@@ -330,7 +330,7 @@ sdmmc*		at dwmshc?
 # Qualcomm SoCs
 qcaoss*		at fdt?
 qccpu*		at fdt?
-qcdwusb*	at fdt?
+#qcdwusb*	at fdt?
 qcgpio*		at acpi?
 qcgpio*		at fdt? early 1
 qciic*		at acpi?
