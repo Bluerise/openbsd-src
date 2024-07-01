@@ -66,7 +66,7 @@ smmu_acpi_match(struct device *parent, void *match, void *aux)
 	struct acpiiort_attach_args *aia = aux;
 	struct acpi_iort_node *node = aia->aia_node;
 
-	if (node->type != ACPI_IORT_SMMU ||
+	if (node->type != ACPI_IORT_SMMU &&
 	    node->type != ACPI_IORT_SMMU_V3)
 		return 0;
 
@@ -87,9 +87,9 @@ smmu_acpi_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_iot = aia->aia_memt;
 
 	if (node->type == ACPI_IORT_SMMU)
-		ret = smmu_v2_acpi_attach(asc, aux);
+		ret = smmu_v2_acpi_attach(asc, node);
 	if (node->type == ACPI_IORT_SMMU_V3)
-		ret = smmu_v3_acpi_attach(asc, aux);
+		ret = smmu_v3_acpi_attach(asc, node);
 
 	if (ret)
 		return;
